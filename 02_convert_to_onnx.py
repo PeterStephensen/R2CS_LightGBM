@@ -17,7 +17,7 @@ import onnxmltools
 import onnxruntime as rt
 import onnx
 from onnx import helper, TensorProto
-from onnxconverter_common.data_types import FloatTensorType
+from onnxmltools.convert.common.data_types import FloatTensorType
 from pathlib import Path
 
 
