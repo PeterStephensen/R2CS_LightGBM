@@ -1,10 +1,16 @@
 """
 Indlæs LightGBM-model (gemt fra R) og konvertér til ONNX-format.
-Fjerner ZipMap-operatoren så output er rene float-tensorer,
+
+Strategien: R's lgb.save() gemmer en rå Booster-tekstfil. onnxmltools
+forventer en scikit-learn-kompatibel LGBMClassifier, så vi wrapper
+Boosteren i en LGBMClassifier med de nødvendige attributter.
+
+ZipMap-operatoren fjernes så output er rene float-tensorer,
 hvilket gør C#-inference væsentligt simplere.
 """
 
 import lightgbm as lgb
+from lightgbm import LGBMClassifier
 import numpy as np
 import pandas as pd
 import onnxmltools
@@ -13,6 +19,24 @@ import onnx
 from onnx import helper, TensorProto
 from onnxconverter_common.data_types import FloatTensorType
 from pathlib import Path
+
+
+def wrap_booster_as_classifier(booster: lgb.Booster) -> LGBMClassifier:
+    """
+    Wrap en rå LightGBM Booster i en LGBMClassifier,
+    så onnxmltools kan konvertere den korrekt som binær klassifikator.
+    """
+    clf = LGBMClassifier()
+    clf._Booster = booster
+    clf.fitted_ = True
+    clf._n_features = booster.num_feature()
+    clf.n_features_in_ = booster.num_feature()
+    clf._n_classes = 2
+    clf.n_classes_ = 2
+    clf.classes_ = np.array([0, 1])
+    clf._objective = "binary"
+    clf.objective_ = "binary"
+    return clf
 
 
 def remove_zipmap(onnx_model):
@@ -42,13 +66,17 @@ def main():
     model_onnx = Path("model/lightgbm_model.onnx")
     test_csv = Path("data/test_features.csv")
 
+    print(f"Indlæser model: {model_txt}")
     booster = lgb.Booster(model_file=str(model_txt))
     num_features = booster.num_feature()
-    print(f"Indlæst LightGBM-model med {num_features} features")
+    print(f"LightGBM-model indlæst: {num_features} features")
+
+    clf = wrap_booster_as_classifier(booster)
 
     initial_types = [("input", FloatTensorType([None, num_features]))]
+    print("Konverterer til ONNX...")
     onnx_model = onnxmltools.convert_lightgbm(
-        booster, initial_types=initial_types, target_opset=15
+        clf, initial_types=initial_types, target_opset=15
     )
 
     onnx_model = remove_zipmap(onnx_model)
